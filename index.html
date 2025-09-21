@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>豪华VR放映室</title>
+    <title>黄梦芊的放映室</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <style>
         * {
@@ -289,14 +289,52 @@
             backdrop-filter: blur(20px);
             border: 2px solid rgba(255, 100, 100, 0.3);
             box-shadow: 0 15px 35px rgba(0, 0, 0, 0.5);
-            max-width: 300px;
+            max-width: 320px;
             transition: all 0.3s ease;
         }
         
         .instructions.hidden {
             transform: translateY(100%);
             opacity: 0;
+            pointer-events: none;
         }
+
+        /* --- NEW: 虚拟摇杆样式 --- */
+        #joystick-container {
+            position: absolute;
+            bottom: 30px;
+            right: 30px;
+            z-index: 99;
+            transition: all 0.3s ease;
+        }
+
+        #joystick-container.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        #joystick-base {
+            width: 120px;
+            height: 120px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 50%;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            user-select: none;
+        }
+
+        #joystick-handle {
+            width: 60px;
+            height: 60px;
+            background: rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border: 2px solid rgba(255, 255, 255, 0.5);
+            cursor: pointer;
+            transition: transform 0.1s;
+        }
+
     </style>
 </head>
 <body>
@@ -404,11 +442,19 @@
     
     <div class="instructions" id="instructions">
         <div class="instructions-title">🎮 操作指南</div>
-        <div>🖱️ 鼠标拖拽: 环视四周</div>
-        <div>⌨️ WASD/方向键: 自由移动</div>
-        <div>🎯 点击屏幕: 播放/暂停</div>
+        <div>🖱️ 拖拽: 环视四周</div>
+        <div>搖桿/WASD: 自由移动</div>
+        <div>🖱️ <b>单击</b>屏幕: 切换焦点</div>
+        <div>🖱️ <b>双击</b>屏幕: 播放/暂停</div>
+        <div>📹 拖拽视频到屏幕播放</div>
         <div>🔄 滚轮: 调整移动速度</div>
         <div>🎪 H键隐藏界面，享受沉浸体验</div>
+    </div>
+
+    <div id="joystick-container">
+        <div id="joystick-base">
+            <div id="joystick-handle"></div>
+        </div>
     </div>
     
     <script>
@@ -429,7 +475,17 @@
         let masterVolume = 0.8;
         let isMasterMuted = false;
         let videoMuted = [false, false, false];
-        
+        let db;
+        // --- NEW: 用于区分单击和双击的变量 ---
+        let clickTimeout = null;
+        let lastClickedTarget = null;
+        // --- NEW: 摇杆相关变量 ---
+        let joystickVector = new THREE.Vector2(0, 0);
+        let joystickActive = false;
+        let joystickContainer, joystickBase, joystickHandle;
+        let joystickBaseRect;
+        let joystickRadius;
+
         // 键盘状态
         const keys = {
             w: false, a: false, s: false, d: false,
@@ -461,6 +517,9 @@
             renderer.toneMappingExposure = 1.2;
             document.getElementById('container').appendChild(renderer.domElement);
             
+            // 初始化数据库并加载已保存的视频
+            initDB();
+            
             // 创建豪华放映室环境
             createLuxuryCinemaRoom();
             
@@ -478,9 +537,59 @@
             
             // 设置文件上传监听
             setupFileUploads();
-            
+            setupJoystick();
             // 窗口大小调整
             window.addEventListener('resize', onWindowResize);
+        }
+        
+        function initDB() {
+            const request = indexedDB.open('VR_Cinema_DB', 1);
+
+            request.onupgradeneeded = function(event) {
+                const db = event.target.result;
+                if (!db.objectStoreNames.contains('videos')) {
+                    db.createObjectStore('videos', { keyPath: 'id' });
+                }
+            };
+
+            request.onsuccess = function(event) {
+                db = event.target.result;
+                console.log('数据库初始化成功');
+                loadVideosFromDB();
+            };
+
+            request.onerror = function(event) {
+                console.error('数据库初始化失败:', event.target.errorCode);
+            };
+        }
+
+        function saveVideoToDB(index, file) {
+            if (!db) return;
+            const transaction = db.transaction(['videos'], 'readwrite');
+            const store = transaction.objectStore('videos');
+            const request = store.put({ id: index, name: file.name, blob: file });
+            request.onsuccess = function() {
+                console.log(`视频 ${index} (${file.name}) 已保存到数据库`);
+            };
+            request.onerror = function(event) {
+                console.error('视频保存失败:', event.target.errorCode);
+            };
+        }
+
+        function loadVideosFromDB() {
+            if (!db) return;
+            const transaction = db.transaction(['videos'], 'readonly');
+            const store = transaction.objectStore('videos');
+            for (let i = 0; i < 3; i++) {
+                const request = store.get(i);
+                request.onsuccess = function(event) {
+                    const result = event.target.result;
+                    if (result && result.blob) {
+                        console.log(`从数据库加载视频 ${i}:`, result.name);
+                        loadVideoFile(result.blob, i, false); // false表示不保存，因为它已经在了
+                    }
+                };
+            }
         }
         
         function createLuxuryCinemaRoom() {
@@ -900,12 +1009,15 @@
             renderer.domElement.addEventListener('touchstart', onTouchStart, { passive: false });
             renderer.domElement.addEventListener('touchmove', onTouchMove, { passive: false });
             renderer.domElement.addEventListener('touchend', onTouchEnd);
+            
+            // 拖拽上传
+            renderer.domElement.addEventListener('dragover', onDragOver);
+            renderer.domElement.addEventListener('drop', onDrop);
         }
         
         function setupFileUploads() {
             for (let i = 1; i <= 3; i++) {
                 const fileInput = document.getElementById(`video${i}`);
-                const filenameDiv = document.getElementById(`filename${i}`);
                 const volumeSlider = document.getElementById(`volume${i}`);
                 const volumeValue = document.getElementById(`volumeValue${i}`);
                 
@@ -913,11 +1025,9 @@
                     const file = event.target.files[0];
                     if (file) {
                         if (file.type.startsWith('video/')) {
-                            filenameDiv.textContent = `已选择: ${file.name}`;
-                            loadVideoFile(file, i - 1);
+                            loadVideoFile(file, i - 1, true);
                         } else {
                             alert('请选择视频文件！');
-                            filenameDiv.textContent = '';
                         }
                     }
                 });
@@ -949,9 +1059,16 @@
             });
         }
         
-        function loadVideoFile(file, index) {
+        function loadVideoFile(fileOrBlob, index, shouldSave = true) {
             showLoading(true);
             updateStatus(index, '加载中...');
+            
+            const filenameDiv = document.getElementById(`filename${index + 1}`);
+            filenameDiv.textContent = `已选择: ${fileOrBlob.name}`;
+
+            if (shouldSave) {
+                saveVideoToDB(index, fileOrBlob);
+            }
             
             const video = document.createElement('video');
             video.loop = true;
@@ -983,12 +1100,15 @@
                 updateStatus(index, '已加载');
                 showLoading(false);
                 
-                console.log(`视频 ${index + 1} 加载成功:`, file.name);
+                console.log(`视频 ${index + 1} 加载成功:`, fileOrBlob.name);
                 
                 // 自动播放第一个视频（需要用户交互后才能有声音）
                 if (index === 0) {
                     enableAudioContext();
                 }
+                // // 自动播放加载的视频
+                // video.play().catch(e => console.log("播放需要用户交互"));
+                // updateStatus(index, '播放中');
             });
             
             video.addEventListener('error', (e) => {
@@ -1004,14 +1124,13 @@
             });
             
             // 创建对象URL
-            const videoURL = URL.createObjectURL(file);
+            const videoURL = URL.createObjectURL(fileOrBlob);
             video.src = videoURL;
             video.load();
         }
         
         // 启用音频上下文（现代浏览器需要用户交互）
         function enableAudioContext() {
-            // 这个函数在用户首次点击时调用，启用音频
             document.addEventListener('click', function enableAudio() {
                 videos.forEach(video => {
                     if (video && video.paused) {
@@ -1093,10 +1212,67 @@
             document.getElementById('loading').style.display = show ? 'block' : 'none';
         }
         
+        // --- NEW: 摇杆控制逻辑 ---
+        function setupJoystick() {
+            joystickContainer = document.getElementById('joystick-container');
+            joystickBase = document.getElementById('joystick-base');
+            joystickHandle = document.getElementById('joystick-handle');
+            joystickRadius = joystickBase.offsetWidth / 4;
+
+            joystickHandle.addEventListener('mousedown', startJoystick);
+            window.addEventListener('mousemove', moveJoystick);
+            window.addEventListener('mouseup', endJoystick);
+
+            joystickHandle.addEventListener('touchstart', startJoystick, { passive: false });
+            window.addEventListener('touchmove', moveJoystick, { passive: false });
+            window.addEventListener('touchend', endJoystick);
+        }
+
+        function startJoystick(event) {
+            event.preventDefault();
+            joystickActive = true;
+            joystickBaseRect = joystickBase.getBoundingClientRect();
+        }
+
+        function moveJoystick(event) {
+            if (!joystickActive) return;
+            event.preventDefault();
+
+            const clientX = event.touches ? event.touches[0].clientX : event.clientX;
+            const clientY = event.touches ? event.touches[0].clientY : event.clientY;
+
+            const centerX = joystickBaseRect.left + joystickBaseRect.width / 2;
+            const centerY = joystickBaseRect.top + joystickBaseRect.height / 2;
+
+            let dx = clientX - centerX;
+            let dy = clientY - centerY;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+
+            if (distance > joystickRadius) {
+                dx = (dx / distance) * joystickRadius;
+                dy = (dy / distance) * joystickRadius;
+            }
+            
+            joystickHandle.style.transform = `translate(${dx}px, ${dy}px)`;
+
+            joystickVector.set(dx / joystickRadius, dy / joystickRadius);
+        }
+
+        function endJoystick() {
+            if (!joystickActive) return;
+            joystickActive = false;
+            joystickHandle.style.transform = 'translate(0, 0)';
+            joystickVector.set(0, 0);
+        }
+
+        // --- (鼠标、触摸、键盘等事件处理函数保持不变，除了 onMouseClick) ---
         function onMouseDown(event) {
-            isMouseDown = true;
-            mouseX = event.clientX;
-            mouseY = event.clientY;
+            // 只在非 UI 元素上触发拖拽
+            if (event.target === renderer.domElement) {
+                isMouseDown = true;
+                mouseX = event.clientX;
+                mouseY = event.clientY;
+            }
         }
         
         function onMouseMove(event) {
@@ -1117,20 +1293,40 @@
             isMouseDown = false;
         }
         
+        // --- MODIFIED: 实现单击/双击功能 ---
         function onMouseClick(event) {
+            // 如果鼠标拖拽了，则不触发点击事件
+            if (Math.abs(event.clientX - mouseX) > 2 || Math.abs(event.clientY - mouseY) > 2) {
+                return;
+            }
+
             const raycaster = new THREE.Raycaster();
             const mouse = new THREE.Vector2();
-            
             mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
             mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
             
             raycaster.setFromCamera(mouse, camera);
             const intersects = raycaster.intersectObjects(screens);
-            
+
             if (intersects.length > 0) {
-                const screen = intersects[0].object;
-                const index = screen.userData.index;
-                toggleVideo(index);
+                const clickedScreen = intersects[0].object;
+                
+                if (clickTimeout && lastClickedTarget === clickedScreen) {
+                    // --- 双击逻辑 ---
+                    clearTimeout(clickTimeout);
+                    clickTimeout = null;
+                    lastClickedTarget = null;
+                    toggleVideo(clickedScreen.userData.index);
+                } else {
+                    // --- 单击逻辑 ---
+                    clearTimeout(clickTimeout); // 如果点击了不同目标，取消上一个计时器
+                    lastClickedTarget = clickedScreen;
+                    clickTimeout = setTimeout(() => {
+                        focusOnScreen(clickedScreen.userData.index);
+                        clickTimeout = null;
+                        lastClickedTarget = null;
+                    }, 250); // 250毫秒内再次点击视为双击
+                }
             }
         }
         
@@ -1141,6 +1337,35 @@
             
             const speedText = moveSpeed < 0.15 ? '慢速' : moveSpeed < 0.35 ? '中等' : '快速';
             document.getElementById('speed-display').textContent = speedText;
+        }
+
+        function onDragOver(event) {
+            event.preventDefault();
+        }
+
+        function onDrop(event) {
+            event.preventDefault();
+
+            const file = event.dataTransfer.files[0];
+            if (!file || !file.type.startsWith('video/')) {
+                console.log('拖拽的不是视频文件');
+                return;
+            }
+
+            const raycaster = new THREE.Raycaster();
+            const mouse = new THREE.Vector2();
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(screens);
+
+            if (intersects.length > 0) {
+                const screen = intersects[0].object;
+                const index = screen.userData.index;
+                console.log(`视频文件已拖拽到屏幕 ${index}`);
+                loadVideoFile(file, index, true);
+            }
         }
         
         // 触摸控制
@@ -1187,7 +1412,7 @@
             switch(event.code) {
                 case 'Space':
                     event.preventDefault();
-                    toggleVideo(0);
+                    toggleVideo(0); // 空格键仍然控制主屏幕
                     break;
                 case 'Digit1':
                     focusOnScreen(0);
@@ -1273,6 +1498,11 @@
                 
                 if (t < 1) {
                     requestAnimationFrame(animate);
+                } else {
+                    // 动画结束后同步相机旋转状态
+                    const euler = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ');
+                    cameraRotation.y = euler.y;
+                    cameraRotation.x = euler.x;
                 }
             }
             animate();
@@ -1302,12 +1532,16 @@
             const moveVector = new THREE.Vector3();
             const speed = moveSpeed;
             
-            if (keys.w || keys.ArrowUp) moveVector.z -= speed;
-            if (keys.s || keys.ArrowDown) moveVector.z += speed;
-            if (keys.a || keys.ArrowLeft) moveVector.x -= speed;
-            if (keys.d || keys.ArrowRight) moveVector.x += speed;
+            // --- MODIFIED: 结合键盘和摇杆输入 ---
+            const moveDirection = new THREE.Vector2(joystickVector.x, -joystickVector.y); // Y轴反转
+            if (keys.w || keys.ArrowUp) moveDirection.y = 1;
+            if (keys.s || keys.ArrowDown) moveDirection.y = -1;
+            if (keys.a || keys.ArrowLeft) moveDirection.x = -1;
+            if (keys.d || keys.ArrowRight) moveDirection.x = 1;
+
+            moveVector.z -= moveDirection.y * speed;
+            moveVector.x += moveDirection.x * speed;
             
-            // 应用相机旋转到移动向量
             moveVector.applyQuaternion(camera.quaternion);
             camera.position.add(moveVector);
             
@@ -1321,9 +1555,10 @@
             requestAnimationFrame(animate);
             
             // 更新相机旋转
-            camera.rotation.x = cameraRotation.x;
-            camera.rotation.y = cameraRotation.y;
-            
+            const quatX = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), cameraRotation.x);
+            const quatY = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), cameraRotation.y);
+            camera.quaternion.copy(quatY).multiply(quatX);
+
             // 更新移动
             updateMovement();
             
@@ -1354,6 +1589,10 @@
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
+            // --- NEW: 更新摇杆位置信息 ---
+            if (joystickBase) {
+                joystickBaseRect = joystickBase.getBoundingClientRect();
+            }
         }
         
         // 性能优化
@@ -1366,7 +1605,7 @@
         
         console.log('🎬 豪华VR放映室初始化完成！');
         console.log('📱 支持桌面和移动设备操作');
-        console.log('🎮 请使用文件选择器上传本地视频文件');
+        console.log('💾 上次播放的视频将自动加载');
     </script>
 </body>
 </html>
