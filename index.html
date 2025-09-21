@@ -479,6 +479,8 @@
         // --- NEW: 用于区分单击和双击的变量 ---
         let clickTimeout = null;
         let lastClickedTarget = null;
+        let touchTimeout = null;
+        let lastTouchedTarget = null;
         // --- NEW: 摇杆相关变量 ---
         let joystickVector = new THREE.Vector2(0, 0);
         let joystickActive = false;
@@ -1372,11 +1374,23 @@
         let touchStartX = 0, touchStartY = 0;
         
         function onTouchStart(event) {
-            event.preventDefault();
+            // 阻止默认行为，如页面滚动
+            if (event.target === renderer.domElement) {
+                event.preventDefault();
+            }
+
+            // 检查是否是摇杆上的触摸
+            if (joystickHandle.contains(event.target)) {
+                startJoystick(event);
+                return;
+            }
+            
             if (event.touches.length === 1) {
-                touchStartX = event.touches[0].clientX;
-                touchStartY = event.touches[0].clientY;
-                isMouseDown = true;
+                const touch = event.touches[0];
+                // 记录初始触摸位置和时间，用于区分拖拽和点击
+                touchStartX = touch.clientX;
+                touchStartY = touch.clientY;
+                isMouseDown = true; // 用于视角拖拽
             }
         }
         
@@ -1396,8 +1410,57 @@
         }
         
         function onTouchEnd(event) {
-            event.preventDefault();
+            if (joystickActive) {
+                endJoystick();
+                return;
+            }
+
+            if (!isMouseDown) return;
             isMouseDown = false;
+
+            const touch = event.changedTouches[0];
+
+            // 1. 判断是否为“点击”而非“拖拽”
+            // 计算触摸开始和结束之间的距离
+            const deltaX = touch.clientX - touchStartX;
+            const deltaY = touch.clientY - touchStartY;
+            const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+
+            // 如果移动距离过大，则视为拖拽，不执行点击逻辑
+            if (distance > 10) {
+                return;
+            }
+
+            // 2. 执行与 onMouseClick 类似的单击/双击判断逻辑
+            const raycaster = new THREE.Raycaster();
+            const mouse = new THREE.Vector2();
+            mouse.x = (touch.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(touch.clientY / window.innerHeight) * 2 + 1;
+            
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(screens);
+
+            if (intersects.length > 0) {
+                const tappedScreen = intersects[0].object;
+                
+                // 判断是否为双击
+                if (touchTimeout && lastTappedTarget === tappedScreen) {
+                    // --- 双击逻辑 ---
+                    clearTimeout(touchTimeout);
+                    touchTimeout = null;
+                    lastTappedTarget = null;
+                    toggleVideo(tappedScreen.userData.index); // 播放/暂停
+                } else {
+                    // --- 单击逻辑 ---
+                    clearTimeout(touchTimeout);
+                    lastTappedTarget = tappedScreen;
+                    touchTimeout = setTimeout(() => {
+                        focusOnScreen(tappedScreen.userData.index); // 切换焦点
+                        touchTimeout = null;
+                        lastTappedTarget = null;
+                    }, 250); // 250毫秒内再次点击视为双击
+                }
+            }
         }
         
         function onKeyDown(event) {
