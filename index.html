@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>黄梦芊的放映室</title>
-    <script src="<a href='https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js' target='_blank'>https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js</a>"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -1517,17 +1517,12 @@
         function toggleVideo(index) {
             if (videos[index]) {
                 if (videos[index].paused) {
-                    // --- 新增逻辑开始 ---
-                    // 遍历所有视频，如果其他视频正在播放，则暂停它
                     videos.forEach((video, i) => {
                         if (video && i !== index && !video.paused) {
                             video.pause();
                             updateStatus(i, '已暂停');
                         }
                     });
-                    // --- 新增逻辑结束 ---
-                    
-                    // 播放当前点击的视频
                     videos[index].play().then(() => {
                         updateStatus(index, '播放中');
                     }).catch(e => {
